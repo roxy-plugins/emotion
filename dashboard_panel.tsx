@@ -1,6 +1,6 @@
-/// <reference path="../../types/akashic-dashboard.d.ts" />
+/// <reference path="../../types/roxy-dashboard.d.ts" />
 import { type ReactElement } from "react";
-import { Chip, api } from "@akashic/dashboard-ui";
+import { Chip, api } from "@roxy/dashboard-ui";
 
 interface Overview {
   state: Record<string, unknown> | null;
@@ -48,7 +48,7 @@ function _effectLabel(value: unknown): string {
 function _toneCell(value: unknown): string {
   const text = String(value || "-");
   const tone = text === "raise_send_bar" ? "warning" : text === "lower_send_bar" ? "success" : "muted";
-  return `<span class="${window.AkashicDashboard.ui.cx.badge(tone)}">${_escape(_effectLabel(text))}</span>`;
+  return `<span class="${window.RoxyDashboard.ui.cx.badge(tone)}">${_escape(_effectLabel(text))}</span>`;
 }
 
 function EmotionDetail(props: { item: Record<string, unknown> | null }): ReactElement {
@@ -114,7 +114,7 @@ function TextDisclosure(props: { title: string; text: string }): ReactElement {
   );
 }
 
-window.AkashicDashboard.registerPlugin({
+window.RoxyDashboard.registerPlugin({
   id: "emotion",
   label: "情绪决策",
   viewLabel: "情绪决策",

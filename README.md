@@ -1,6 +1,6 @@
 # emotion
 
-Akashic emotion and proactive tuning plugin.
+Roxy emotion and proactive tuning plugin.
 
 ## 移动端看板
 
