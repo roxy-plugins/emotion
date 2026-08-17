@@ -1,5 +1,5 @@
-// ../emotion/dashboard_panel.tsx
-import { Chip, api } from "@akashic/dashboard-ui";
+// ../../roxy-plugin-migration-worktrees-20260818/emotion/dashboard_panel.tsx
+import { Chip, api } from "@roxy/dashboard-ui";
 import { jsx, jsxs } from "react/jsx-runtime";
 function _score(value) {
   return typeof value === "number" ? value.toFixed(3) : "-";
@@ -27,7 +27,7 @@ function _effectLabel(value) {
 function _toneCell(value) {
   const text = String(value || "-");
   const tone = text === "raise_send_bar" ? "warning" : text === "lower_send_bar" ? "success" : "muted";
-  return `<span class="${window.AkashicDashboard.ui.cx.badge(tone)}">${_escape(_effectLabel(text))}</span>`;
+  return `<span class="${window.RoxyDashboard.ui.cx.badge(tone)}">${_escape(_effectLabel(text))}</span>`;
 }
 function EmotionDetail(props) {
   const item = props.item;
@@ -102,7 +102,7 @@ function TextDisclosure(props) {
     /* @__PURE__ */ jsx("pre", { children: props.text || "-" })
   ] });
 }
-window.AkashicDashboard.registerPlugin({
+window.RoxyDashboard.registerPlugin({
   id: "emotion",
   label: "\u60C5\u7EEA\u51B3\u7B56",
   viewLabel: "\u60C5\u7EEA\u51B3\u7B56",
