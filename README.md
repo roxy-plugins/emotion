@@ -1,6 +1,6 @@
 # emotion
 
-Akashic emotion and proactive tuning plugin.
+Roxy emotion and proactive tuning plugin.
 
 `feedback-preference-context` 只把反馈归纳结果追加到 workspace 根目录的
 `proactive_pending.md`。该队列由用户或明确授权的维护流程审核；插件不会在 Drift
