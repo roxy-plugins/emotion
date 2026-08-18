@@ -46,6 +46,12 @@ def _plugin_context(tmp_path: Path) -> PluginContext:
     )
 
 
+def test_pending_candidates_are_not_merged_automatically() -> None:
+    """正式 Proactive Context 只能由明确授权流程修改。"""
+
+    assert EmotionPlugin().jobs() == []
+
+
 @pytest.mark.asyncio
 async def test_emotion_plugin_activates_and_reads_state(tmp_path: Path) -> None:
     plugin = EmotionPlugin()
@@ -73,7 +79,9 @@ async def test_emotion_plugin_activates_and_reads_state(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mobile_projection_returns_state_and_real_influences(tmp_path: Path) -> None:
+async def test_mobile_projection_returns_state_and_real_influences(
+    tmp_path: Path,
+) -> None:
     plugin = EmotionPlugin()
     plugin.context = _plugin_context(tmp_path)
     plugin.activate()

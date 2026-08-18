@@ -9,7 +9,7 @@ description: 从 proactive 正反馈中归纳待审核推送偏好候选，追�
 
 读取尚未处理过的 `topic_follow` 和 `explicit_quote` 反馈，最多一批 50 条，把会影响主动推送决策的候选规则追加到 workspace 根目录的 `proactive_pending.md`。
 
-这个 skill 只写 pending 队列。它的职责类似普通记忆里的 `PENDING.md`：先把候选沉淀成可审核队列，后续再由独立流程合并到正式规则。
+这个 skill 只写 pending 队列。它的职责类似普通记忆里的 `PENDING.md`：先把候选沉淀成可审核队列，后续由用户或明确授权的维护流程审核。它不得自动修改 `PROACTIVE_CONTEXT.md`，不得清空 pending。
 
 ## 流程
 
@@ -29,6 +29,7 @@ feedback events
 
 ```bash
 python3 skills/feedback-preference-context/scripts/sample_feedback_context.py sample --drift-dir . --chunk-index 0 --chunk-size 10
+python3 skills/feedback-preference-context/scripts/sample_feedback_context.py validate --drift-dir .
 ```
 
 脚本只负责取数：
@@ -43,10 +44,13 @@ sample
 ├─ 用 ../sessions.db 回填 proactive/user 原文
 ├─ proactive 文本截断到 100 字，user 文本不截断
 ├─ 每次只返回 chunk-size 条 events
-└─ 返回 cursor_tail_feedback_id
+├─ 返回 status=db_missing / db_empty / no_eligible_rows / ready
+└─ ready 时返回稳定 batch_key 与 chunk_key
 ```
 
-脚本不判断 topic、不判断 effect、不生成 pending 内容。
+`validate` 子命令读取 workspace 根目录的 `../proactive_pending.md`，检查候选必需字段、effect、confidence、evidence 和重复 chunk 标记。
+
+脚本不判断 topic、不判断 effect、不生成 pending 内容；候选语义仍由当前 chunk 证据和 LLM 推断。
 
 ## 执行规则
 
@@ -62,7 +66,10 @@ sample
 }
 ```
 
-3. 如果 `found=false`，用 `finish_drift(status="completed", message_result="silent")` 静默结束，不推进 cursor；无新数据表示本轮检查已闭环，不是暂停。
+3. 根据脚本返回的 `status` 分流：
+   - `db_missing`、`db_empty`、`no_eligible_rows`：在没有 active batch 时，用 `finish_drift(status="completed", message_result="silent")` 静默结束，不推进 cursor。这些是已完成的健康检查，不是暂停。
+   - `schema_invalid`、`cursor_invalid` 或脚本执行失败：保留错误证据，用 `finish_drift(status="paused", message_result="silent")` 暂停，不推进 cursor；不得把坏 schema 或坏 cursor 当成空库。
+   - `ready`：继续处理当前 batch/chunk。
 4. 有样本时先读取 `../proactive_pending.md`，确认现有文件内容和末尾位置；文件不存在就用空内容处理。
    - 必须使用路径 `../proactive_pending.md`。
    - 禁止使用 `proactive_pending.md` 或 `./proactive_pending.md`，那会写到 drift 目录而不是 workspace 根目录。
@@ -70,12 +77,20 @@ sample
 6. 不要调用 `fetch_messages`。
 7. 本轮只允许使用三类输入：固定脚本返回的 chunk、`../proactive_pending.md`、`../memory/MEMORY.md`。其他 workspace 文档不是证据来源，不要读取。
 8. `shell` 只用于运行固定脚本；不要用它执行 `cat`、`cp`、`ls`、`sed`、`grep` 或读取/复制文件。
-9. 只处理当前 chunk 的 `events`，自己追加到 `../proactive_pending.md` 尾部。
-10. 每个 chunk 写一次：写完当前 chunk 的 pending section 后，才能读取下一个 chunk。
-11. 如果当前 chunk 没有合格候选，也写一个 `no_candidate` section，说明这个 chunk 已审核。
-12. 如果 `has_more=true`，按 `next_chunk_index` 调同一个脚本读取下一段，再重复“判断 -> 追加 pending section”。
-13. 如果当前 chunk 返回 `has_more=true`，禁止调用 `finish_drift`。
-14. 只有处理并写入所有 chunk，直到某个 chunk 返回 `has_more=false` 后，才能调用 `finish_drift`。
+9. 第一次得到 `ready` 且返回 `active_batch=false` 时，不要立即写文件；先用 `finish_drift(status="paused")` 固化本批 `active_feedback_ids`、`active_cursor_tail_feedback_id` 和 `active_chunk_index=0`，并写清 scratchpad。这样后续 chunk 不会被新到达的反馈改变。
+10. 进入 `active_batch=true` 后，只处理当前 chunk 的 `events`，自己追加到 `../proactive_pending.md` 尾部。
+   - 使用脚本返回的稳定标题：`## Batch {batch_key}` 与 `### Chunk {chunk_key}`。
+   - 写入前如果同一 batch 已存在同一 `chunk_key` 标题，说明上次可能已写入但尚未推进 cursor；不要再次追加，只重新校验该文件并继续。
+11. 每个 chunk 写一次：写完当前 chunk 的 pending section 后，必须调用固定校验命令：
+
+```bash
+python3 skills/feedback-preference-context/scripts/sample_feedback_context.py validate --drift-dir .
+```
+
+校验不是 `valid=true` 就不能继续；校验失败必须暂停且不推进 cursor。
+12. 如果当前 chunk 没有合格候选，也写一个 `no_candidate` section，说明这个 chunk 已审核。
+13. 如果 `has_more=true`，写完并校验当前 chunk 后，用 `finish_drift(status="paused")` 保存 `active_chunk_index=next_chunk_index`，保留 active IDs，不推进 `latest_processed_feedback_id`；下一次 Drift 从同一 batch 继续。
+14. 只有当前 chunk 返回 `has_more=false` 且最终 `validate` 通过后，才能用 `finish_drift(status="completed")`，同时写入 `latest_processed_feedback_id=active_cursor_tail_feedback_id`，并把 `active_feedback_ids`、`active_cursor_tail_feedback_id`、`active_chunk_index` 设为 `null` 清除 active batch。
 15. 不要等 50 条全部看完再写，也不要为每条 event 单独写文件。
 16. 只追加新候选，不修改、不删除已有队列项；写文件时必须保留原文完整前缀，只在末尾增加新 batch/chunk 内容。
 17. 只看 proactive 消息和 user 回复这一对文本。assistant 后续回答不是证据来源。
@@ -110,9 +125,9 @@ sample
     - `tone`：改变同一候选内容的表达方式。
 27. 不写普通生活事实、人设事实、一次性寒暄、测试消息。
 28. evidence 必须包含完整 `feedback#id` 和完整 user message id。
-29. 全部 chunk 都写入成功后，`cursor_update.latest_processed_feedback_id` 必须等于第 0 个 chunk 返回的 `cursor_tail_feedback_id`。
+29. 最终 completed 时，`cursor_update.latest_processed_feedback_id` 必须等于 active batch 的 `active_cursor_tail_feedback_id`，并清除三个 active 字段。
 30. `finish_drift.briefing` 必须使用实际处理结果，写清总样本数、chunk 数、pending 候选条数，不要估算。
-31. 如果只处理了部分 chunk，必须 `status="paused"`，不要推进 `latest_processed_feedback_id`。
+31. 如果只处理了部分 chunk，或检测到已有 chunk 但 pending 校验失败，必须 `status="paused"`，不要推进 `latest_processed_feedback_id`。
 
 ## proactive_pending.md 格式
 
@@ -126,7 +141,7 @@ sample
 每批追加一个 section：
 
 ```text
-## Batch feedback#1-feedback#50
+## Batch feedback#50-feedback#1
 
 ### Chunk feedback#50-feedback#41
 
@@ -160,19 +175,22 @@ sample
 {
   "skill_used": "feedback-preference-context",
   "status": "completed",
-  "briefing": "根据 proactive 正反馈样本追加 proactive_pending.md 队列",
+    "briefing": "根据 proactive 正反馈样本追加并校验 proactive_pending.md 队列",
   "message_result": "silent",
   "cursor_update": {
     "latest_processed_feedback_id": 123,
     "active_cursor_tail_feedback_id": null,
-    "active_feedback_ids": null
+    "active_feedback_ids": null,
+    "active_chunk_index": null
   },
   "journal_append": [
     {
       "entry_type": "proactive_pending_appended",
-      "key": "1-123",
+      "key": "feedback#123-feedback#1",
       "payload": {
         "feedback_ids": [1, 2, 3],
+        "batch_key": "feedback#123-feedback#1",
+        "chunk_keys": ["feedback#123-feedback#114", "feedback#113-feedback#104"],
         "cursor_tail_feedback_id": 123
       }
     }
@@ -186,6 +204,10 @@ sample
 - `explicit_quote` 必须包含，且视为更强证据，但不是自动规则。
 - 只有 `proactive_pending.md` 成功尾部追加后才能推进 `last_feedback_id`。
 - 写入前必须检查旧内容；禁止用新生成内容覆盖整个 pending 文件。
+- chunk 标题是崩溃恢复的幂等键；已有同键 chunk 不得重复追加。
+- active batch 固化后，新反馈只能进入下一批；不得在处理中重新查询并改变 batch 边界。
+- 每次追加后必须通过 `validate`；校验失败不得推进 cursor。
 - 不打扰用户，不调用 `message_push`。
 - 不读取或写入 `state.json`、`history.json`。
 - 不修改 proactive_feedback 数据库。
+- 不读取或写入 `PROACTIVE_CONTEXT.md`；正式规则只能由独立审核流程修改。
